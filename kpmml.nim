@@ -1,4 +1,4 @@
-import strutils,os,times,math
+import strutils,os,times,math,parseopt,parseutils
 
 # Here begins code ported from the original C# kpmml
 
@@ -105,7 +105,106 @@ let notes: seq[tuple[name: string, freq: float32]] = @[("CN",16.35'f32),("CS",17
 
 var tree = newSeq[tuple[dlev:uint16,chns:seq[tuple[chan:uint16,lins:seq[string]]]]](0)
 
+var codeMacros = newSeq[tuple[name:string,line:string]](0)
+
 var envdefs = newSeq[tuple[name:string,attk:float32,hold:float32,dcay:float32,isus:bool,susl:float32]](0)
 var wavdefs = newSeq[tuple[name:string,wtyp:string,ampl:float32,duty:uint16]](0)
-var fmdefs = newSeq[tuple[name:string,3o:bool,cenv:string,mult:uint8,tmod:uint8,tcar:uint8,inch:uint16]](0)
+var fmdefs = newSeq[tuple[name:string,o3:bool,cenv:string,mult:uint8,tmod:uint8,tcar:uint8,inch:uint16]](0)
+
+var MATHBITS: uint8 = 32
+
+var SAMPRATE: uint32 = 44100
+var FILENAME: string = ""
+var TICKRATE: uint16 = 0
+
+var NAME, AUTH: string = ""
+
+proc phelp() =
+  echo "HELP UNIMPLEMENTED OH GODS"
+  quit(0)
+
+for kind, key, val in getopt():
+  case kind
+  of cmdArgument:
+    FILENAME = key
+  of cmdLongOption, cmdShortOption:
+    case key
+    of "help", "h": phelp()
+    of "math", "m": MATHBITS = val.parseUInt().uint8
+    of "samp", "samplerate", "s": SAMPRATE = val.parseUint().uint32
+  of cmdEnd: echo "what ?"
+if FILENAME == "":
+  echo "You need to specify a file, titscheese."
+  quit(1)
+
+var currBlock: string = "m"
+
+proc addToLine(input: string, outer: var string) =
+  if outer.isNilOrEmpty():
+    outer = input
+  else:
+    outer = "$1 $2" % [outer, input]
+  return
+
+for line in FILENAME.lines:
+  var codeLine: string = ""
+  var chanNum: uint16 = 0
+  var macroName: string = ""
+  
+  var envName: string = ""
+
+  block deComment:
+    if line.startsWith('#') or line.isNilOrEmpty() or line.isNilOrWhitespace():
+      break deComment
+
+    var currSymbol: uint16 = 0
+    for symbol in line.split:
+      currSymbol.inc
+
+      if symbol.startsWith('#') or symbol.isNilOrEmpty or symbol.isNilOrWhitespace():
+        break deComment
+      if symbol.startsWith('/'):
+        case symbol
+        of "/env":
+          currBlock = "e"
+          break deComment
+        of "/wav":
+          currBlock = "w"
+          break deComment
+        of "/fm":
+          currBlock = "f"
+          break deComment
+        of "/mu":
+          currBlock = "c"
+          break deComment
+        else:
+          echo "Invalid block name"
+          quit(2)
+
+      case currBlock
+      of "m":
+        if symbol.startsWith("name="):
+          NAME = symbol
+          NAME.removePrefix("name="):
+        elif symbol.startsWith("author="):
+          AUTH = symbol
+          AUTH.removePrefix("author=")
+        elif symbol.endsWith("hz"):
+          var symbolCopy = symbol
+          symbolCopy.removeSuffix("hz")
+          TICKRATE = symbolCopy.parseUInt().uint16
+        else:
+          break deComment
+#      of "e":
+#      of "w":
+#      of "f":
+      of "c":
+        if currSymbol == 1 and symbol.startsWith('c'):
+          var symbolCopy = symbol
+          symbolCopy.removePrefix('c')
+          chanNum = symbolCopy.parseUInt().uint16
+        elif currSymbol == 1:
+          macroName = symbol
+        else:
+          symbol.addToLine(codeLine)
 
