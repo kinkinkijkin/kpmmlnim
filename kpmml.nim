@@ -1,6 +1,4 @@
-import strutils,os,times,math,parseopt,parseutils
-
-# Here begins code ported from the original C# kpmml
+import strutils,os,times,math,parseopt,parseutils,audiogen
 
 # -- Filter logic, currently uses globals --
 
@@ -35,7 +33,9 @@ proc SVF(input: float32, cutoff: float32, typ: uint8): float32 =
   else:
     return output3
 
-# PORTING ENDS HERE
+proc cleanFilter() =
+  window1 = newSeq[float32](0)
+  window2 = newSeq[float32](0)
 
 let notes: seq[tuple[name: string, freq: float32]] = @[("CN",16.35'f32),("CS",17.32'f32),("DN",18.35'f32),("DS",19.45'f32),("E",20.60'f32),("FN",21.83'f32),("FS",23.12'f32),("GN",24.50'f32),("GS",25.96'f32),("AN",27.50'f32),("AS",29.14'f32),("B",30.87'f32),("R",0.0000000001'f32)]
 
@@ -44,13 +44,17 @@ let notes: seq[tuple[name: string, freq: float32]] = @[("CN",16.35'f32),("CS",17
 #     |-- Channels
 #         |-- Channel code
 
-var tree = newSeq[tuple[dlev:uint16,chns:seq[tuple[chan:uint16,lins:seq[string]]]]](0)
+#2022 update: WHAT THE HELL IS THIS?
+
+#var tree = newSeq[tuple[dlev:uint16,chns:seq[tuple[chan:uint16,lins:seq[string]]]]](0)
+
+var chans = newSeq[seq[string]](0)
 
 var codeMacros = newSeq[tuple[name:string,line:string]](0)
 
-var envdefs = newSeq[tuple[name:string,attk:float32,hold:float32,dcay:float32,isus:bool,susl:float32]](0)
-var wavdefs = newSeq[tuple[name:string,wtyp:string,ampl:float32,duty:uint16]](0)
-var fmdefs = newSeq[tuple[name:string,o3:bool,cenv:string,mult:uint8,tmod:uint8,tcar:uint8,inch:uint16]](0)
+var envdefs = newSeq[tuple[name:string,line:seq[string]]](0)
+var wavdefs = newSeq[tuple[name:string,line:seq[string]]](0)
+var fmdefs = newSeq[tuple[name:string,line:seq[string]]](0)
 
 var MATHBITS: uint8 = 32
 
@@ -99,12 +103,27 @@ proc addToLine(input: string, outer: var string) =
     outer = "$1 $2" % [outer, input]
   return
 
+# why did i put the parser out in global code like this?????????
+
+var push: bool = false
+var pushName: string = ""
+var pushSeq: seq[string] = @[]
+
 for line in FILENAME.lines:
+
+  if push:
+    case currBlock:
+    of "e": envdefs.add((name: pushName, line: pushSeq))
+    of "w": wavdefs.add((name: pushName, line: pushSeq))
+    of "f": fmdefs.add((name:pushName, line: pushSeq))
+
+  push = false
+  pushName = ""
+  pushSeq = @[]
+
   var codeLine: string = ""
-  var chanNum: uint16 = 0
+  var chanNum: int = 0
   var macroName: string = ""
-  
-  var envName: string = ""
 
   block deComment:
     if line.startsWith('#') or line.isEmptyOrWhitespace():
@@ -129,16 +148,25 @@ for line in FILENAME.lines:
 
       case currBlock
       of "m": processMetaSym(symbol)
-#      of "e":
-#      of "w":
-#      of "f":
+      of "e", "w", "f":
+        if currSymbol == 1:
+          pushName = symbol
+          push = true
+        else:
+          pushSeq.add(symbol)
       of "c":
         if currSymbol == 1 and symbol.startsWith('c'):
           var symbolCopy = symbol
           symbolCopy.removePrefix('c')
-          chanNum = symbolCopy.parseUInt().uint16
+          chanNum = symbolCopy.parseInt()
         elif currSymbol == 1:
           macroName = symbol
         else:
           symbol.addToLine(codeLine)
+    if currBlock == "c" and macroName.isEmptyOrWhitespace():
+      while chanNum > chans.len:
+        chans.add(@[])
+      chans[chanNum].add(codeLine)
+    elif currBlock == "c":
+      codeMacros.add((name: macroName, line: codeLine))
 
